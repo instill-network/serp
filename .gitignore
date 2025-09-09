@@ -4,5 +4,4 @@ playwright-report/
 test-results/
 .env
 .DS_Store
-dist/
 .idea

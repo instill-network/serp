@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { searchGoogle } = require('./googleSerp');
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -9,18 +10,8 @@ function parseArgs(argv) {
     else if (a === '--gl') args.gl = argv[++i];
     else if (a === '--domain') args.domain = argv[++i];
     else if (a === '--tbs') args.tbs = argv[++i];
-    else if (a === '--tbm') args.tbm = argv[++i];
-    else if (a === '--udm') args.udm = Number(argv[++i]);
     else if (a === '--safe') args.safe = argv[++i];
     else if (a === '--headful') args.headless = false;
-    else if (a === '--ncr') args.ncr = true;
-    else if (a === '--proxy') args.proxy = argv[++i];
-    else if (a === '--debug-html') args.debugHtmlPath = argv[++i] || 'last_serp.html';
-    else if (a === '--debug-screenshot') args.debugScreenshotPath = argv[++i] || 'last_serp.png';
-    else if (a === '--retries') args.retries = Number(argv[++i]);
-    else if (a === '--delay-min') args.delayMinMs = Number(argv[++i]);
-    else if (a === '--delay-max') args.delayMaxMs = Number(argv[++i]);
-    else if (a === '--no-stealth') args.noStealth = true;
     else if (a === '--json') args.json = true;
     else if (a === '--help' || a === '-h') args.help = true;
     else if (a.startsWith('-')) {
@@ -42,17 +33,8 @@ Options:
       --gl <cc>        Country code (e.g., US, GB)
       --domain <host>  Google domain (default google.com)
       --tbs <val>      Time filter (e.g., qdr:d | qdr:w | qdr:m)
-      --tbm <mode>     Vertical: e.g., nws (news), vid (videos)
-      --udm <val>      UI mode (e.g., 14)
       --safe <mode>    Safe search: off | active (default off)
       --headful        Run browser in headful mode
-      --ncr            Use No Country Redirect cookie
-      --proxy <url>    Proxy server (e.g., http://host:port or socks5://...)
-      --debug-html [f] Save HTML to file on failure (default last_serp.html)
-      --debug-screenshot [f] Save screenshot on failure (default last_serp.png)
-      --retries <N>    Retry attempts on failure (default 2)
-      --delay-min <ms> Min jitter delay between steps (default 120)
-      --delay-max <ms> Max jitter delay between steps (default 300)
       --json           Output results as JSON only
   -h, --help           Show help
 `);
@@ -67,13 +49,6 @@ async function main() {
   }
   const query = args._.join(' ');
 
-  // Allow disabling stealth plugin via CLI flag (must set before requiring module)
-  if (args.noStealth) {
-    process.env.SERP_DISABLE_STEALTH = 'true';
-  }
-
-  const { searchGoogle } = require('./googleSerp');
-
   const opts = {
     num: args.num ?? 10,
     hl: args.hl ?? 'en',
@@ -81,16 +56,7 @@ async function main() {
     domain: args.domain ?? 'google.com',
     headless: args.headless !== false,
     tbs: args.tbs,
-    tbm: args.tbm,
-    udm: Number.isFinite(args.udm) ? args.udm : undefined,
     safe: args.safe ?? 'off',
-    ncr: !!args.ncr,
-    proxy: args.proxy,
-    debugHtmlPath: args.debugHtmlPath,
-    debugScreenshotPath: args.debugScreenshotPath,
-    retries: Number.isFinite(args.retries) ? args.retries : 2,
-    delayMinMs: Number.isFinite(args.delayMinMs) ? args.delayMinMs : 120,
-    delayMaxMs: Number.isFinite(args.delayMaxMs) ? args.delayMaxMs : 300,
   };
 
   try {

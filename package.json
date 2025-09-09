@@ -8,13 +8,19 @@
     "serp": "bin/serp"
   },
   "scripts": {
-    "serp": "node src/cli.js",
-    "start": "node src/cli.js"
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "serp": "node dist/cli.js",
+    "start": "node dist/cli.js"
   },
   "dependencies": {
     "playwright": "^1.47.2"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.3"
   }
 }

@@ -1,0 +1,28 @@
+{
+  "name": "serp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Google SERP scraper using Playwright",
+  "type": "commonjs",
+  "bin": {
+    "serp": "bin/serp"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "serp": "node dist/cli.js",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "playwright": "^1.47.2",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.3"
+  }
+}

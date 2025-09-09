@@ -1,0 +1,8 @@
+node_modules/
+package-lock.json
+playwright-report/
+test-results/
+.env
+.DS_Store
+dist/
+.idea

@@ -11,6 +11,7 @@ function parseArgs(argv) {
     else if (a === '--domain') args.domain = argv[++i];
     else if (a === '--tbs') args.tbs = argv[++i];
     else if (a === '--safe') args.safe = argv[++i];
+    else if (a === '--proxy') args.proxy = argv[++i];
     else if (a === '--headful') args.headless = false;
     else if (a === '--json') args.json = true;
     else if (a === '--help' || a === '-h') args.help = true;
@@ -33,6 +34,7 @@ Options:
       --gl <cc>        Country code (e.g., US, GB)
       --domain <host>  Google domain (default google.com)
       --tbs <val>      Time filter (e.g., qdr:d | qdr:w | qdr:m)
+      --proxy <url>    Proxy (http:// or socks5://). Username may include modifiers like +country=us
       --safe <mode>    Safe search: off | active (default off)
       --headful        Run browser in headful mode
       --json           Output results as JSON only
@@ -57,6 +59,7 @@ async function main() {
     headless: args.headless !== false,
     tbs: args.tbs,
     safe: args.safe ?? 'off',
+    proxy: args.proxy,
   };
 
   try {

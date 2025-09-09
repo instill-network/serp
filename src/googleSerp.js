@@ -1,5 +1,21 @@
 const { chromium, devices } = require('playwright');
 
+function parseProxy(input) {
+  if (!input) return undefined;
+  if (typeof input !== 'string') return input;
+  let raw = input.trim();
+  if (!/^\w+:\/\//i.test(raw)) raw = `http://${raw}`;
+  try {
+    const u = new URL(raw);
+    const server = `${u.protocol}//${u.hostname}${u.port ? ':' + u.port : ''}`;
+    const username = u.username || undefined; // keep modifiers like +country=us
+    const password = u.password || undefined;
+    return { server, username, password };
+  } catch (_) {
+    return { server: raw };
+  }
+}
+
 async function acceptGoogleConsent(page) {
   const tryClickTopLevel = async () => {
     const selectors = [
@@ -144,17 +160,21 @@ async function searchGoogle(query, options = {}) {
     timeoutMs = 30000,
     safe = 'off',
     tbs,
+    proxy,
   } = options;
 
   const url = buildSearchUrl(query, { hl, gl, domain, num, safe, tbs });
-  const browser = await chromium.launch({
+  const launchOpts = {
     headless,
     args: [
       '--disable-blink-features=AutomationControlled',
       '--no-default-browser-check',
       '--no-first-run'
     ]
-  });
+  };
+  const parsedProxy = parseProxy(proxy);
+  if (parsedProxy) launchOpts.proxy = parsedProxy;
+  const browser = await chromium.launch(launchOpts);
 
   const baseDevice = devices['Desktop Chrome'];
   const context = await browser.newContext({
@@ -183,4 +203,3 @@ module.exports = {
   searchGoogle,
   buildSearchUrl,
 };
-

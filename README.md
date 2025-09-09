@@ -14,6 +14,7 @@ Flags
 - `--gl` country code (e.g., `US`, `GB`)
 - `--domain` Google domain (default `google.com`)
 - `--tbs` time filter like `qdr:d` (day), `qdr:w` (week), `qdr:m` (month)
+- `--proxy <url>` proxy server (e.g. `http://user:pass@host:port` or `socks5://user:pass@host:port`). Username may include provider modifiers like `+country=us`.
 - `--safe` safe search: `off` | `active` (default `off`)
 - `--headful` run non-headless
 - `--json` print JSON only

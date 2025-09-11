@@ -221,6 +221,10 @@ function computeCorrectness(results: OneRun[], baselineName?: string) {
     }
     out.jaccard[v] = { avg: scores.length ? (scores.reduce((s,x)=>s+x,0)/scores.length) : null, count: scores.length };
   }
+  // Also include baseline vendor with self-overlap = 1.0 for chart alignment
+  const baseQueries = Object.keys(byVendor[baseVendor] || {});
+  const baseCount = baseQueries.filter(q => ((byVendor[baseVendor][q]?.results || []).length > 0)).length;
+  out.jaccard[baseVendor] = { avg: 1, count: baseCount };
   return out;
 }
 
@@ -229,8 +233,13 @@ function renderReportHTML(data: { args: BenchArgs; results: OneRun[]; summary: a
   const succRates = vendors.map(v => (data.summary[v].successRate * 100).toFixed(1));
   const p95Total = vendors.map(v => Math.round(data.summary[v].p95.total || 0));
   const correctness = data.correctness?.jaccard || {};
-  const corrVendors = Object.keys(correctness);
-  const corrScores = corrVendors.map(v => Number(correctness[v].avg?.toFixed(3) || '0'));
+  const corrBaseline = data.correctness?.baseline || vendors[0] || '';
+  const corrVendors = vendors.slice();
+  const corrScores = corrVendors.map(v => {
+    if (v === corrBaseline) return 1;
+    const avg = correctness[v]?.avg;
+    return (typeof avg === 'number' && Number.isFinite(avg)) ? Number(avg.toFixed(3)) : null;
+  });
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -289,19 +298,27 @@ function renderReportHTML(data: { args: BenchArgs; results: OneRun[]; summary: a
     const h = c.height = c.clientHeight * devicePixelRatio;
     const pad = 20 * devicePixelRatio;
     const barW = (w - pad*2) / labels.length * 0.7;
-    const max = Math.max(...values, 1);
+    const numeric = values.map(v => (typeof v === 'number' && isFinite(v)) ? v : NaN);
+    const finite = numeric.filter(v => isFinite(v));
+    const max = Math.max(...(finite.length ? finite : [1]));
     ctx.clearRect(0,0,w,h);
     ctx.font = (12*devicePixelRatio) + 'px system-ui, sans-serif';
     ctx.fillStyle = '#333';
     labels.forEach((lab, i) => {
       const x = pad + i * ((w - pad*2) / labels.length) + (((w - pad*2) / labels.length) - barW)/2;
       const val = values[i];
-      const bh = (h - pad*2) * (val / max);
-      ctx.fillStyle = color;
-      ctx.fillRect(x, h - pad - bh, barW, bh);
       ctx.fillStyle = '#333';
       ctx.fillText(String(lab), x, h - pad + 14*devicePixelRatio);
-      ctx.fillText(String(val), x, h - pad - bh - 4*devicePixelRatio);
+      if (typeof val === 'number' && isFinite(val)) {
+        const bh = (h - pad*2) * (val / max);
+        ctx.fillStyle = color;
+        ctx.fillRect(x, h - pad - bh, barW, bh);
+        ctx.fillStyle = '#333';
+        ctx.fillText(String(val), x, h - pad - bh - 4*devicePixelRatio);
+      } else {
+        ctx.fillStyle = '#777';
+        ctx.fillText('N/A', x, h - pad - 4*devicePixelRatio);
+      }
     });
   }
   bar('succ', vendors, succRates, '#3b82f6');

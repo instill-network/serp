@@ -13,6 +13,7 @@ function parseArgs(argv: string[]) {
     else if (a === '--safe') args.safe = argv[++i];
     else if (a === '--headful') args.headless = false;
     else if (a === '--proxy') args.proxy = argv[++i];
+    else if (a === '--use-system-proxy') args.useSystemProxy = true;
     else if (a === '--keep-open') args.keepOpen = true;
     else if (a === '--browser') args.browser = argv[++i];
     else if (a === '--json') args.json = true;
@@ -37,6 +38,7 @@ Options:
       --headful        Run browser in headful mode
       --keep-open      Keep the browser open (press Enter to close)
       --browser <name> Browser engine: chromium | firefox | webkit (default chromium)
+      --use-system-proxy  Use OS proxy settings when --proxy is not set (default off)
       --json           Output results as JSON only
   -h, --help           Show help
 `);
@@ -62,6 +64,7 @@ async function main() {
     proxy: args.proxy,
     keepOpen: !!args.keepOpen,
     browser: (['chromium','firefox','webkit'] as const).includes(args.browser) ? args.browser : undefined,
+    useSystemProxy: !!args.useSystemProxy,
   };
 
   try {

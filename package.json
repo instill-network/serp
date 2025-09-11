@@ -5,13 +5,15 @@
   "description": "Google SERP scraper using Playwright",
   "type": "commonjs",
   "bin": {
-    "serp": "bin/serp"
+    "serp": "bin/serp",
+    "serp-bench": "bin/serp-bench"
   },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
     "serp": "node dist/cli.js",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js",
+    "bench": "node dist/bench.js"
   },
   "dependencies": {
     "playwright": "^1.47.2"

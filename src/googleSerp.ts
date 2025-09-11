@@ -14,6 +14,7 @@ export interface SearchOptions {
   proxy?: ProxyInput;
   keepOpen?: boolean;
   browser?: 'chromium' | 'firefox' | 'webkit';
+  useSystemProxy?: boolean; // if true and no proxy provided, do not disable system proxy
 }
 
 export interface SerpItem {
@@ -26,6 +27,39 @@ export interface SerpResult {
   query: string;
   url: string;
   results: SerpItem[];
+}
+
+export type NavigationTimings = {
+  startTime: number;
+  fetchStart: number;
+  domainLookupStart: number;
+  domainLookupEnd: number;
+  connectStart: number;
+  secureConnectionStart: number;
+  connectEnd: number;
+  requestStart: number;
+  responseStart: number;
+  responseEnd: number;
+  domContentLoadedEventEnd: number;
+  loadEventEnd: number;
+};
+
+export type DurationSummary = {
+  connect: number | null;
+  tls: number | null;
+  ttfb: number | null;
+  contentDownload: number | null;
+  dcl: number | null;
+  load: number | null;
+  total: number | null;
+};
+
+export interface DetailedSerpResult extends SerpResult {
+  ok: boolean;
+  blocked: boolean;
+  blockType?: string;
+  timings?: DurationSummary & { raw: NavigationTimings };
+  close?: () => Promise<void>; // Provided only when keepOpen is true
 }
 
 export function parseProxy(input?: ProxyInput): ( { server: string; username?: string; password?: string } & { authRaw?: string; scheme?: string } ) | undefined {
@@ -57,7 +91,7 @@ export function parseProxy(input?: ProxyInput): ( { server: string; username?: s
   return { server, username, password, authRaw, scheme } as any;
 }
 
-async function acceptGoogleConsent(page: Page) {
+export async function acceptGoogleConsent(page: Page) {
   const tryClickTopLevel = async () => {
     const selectors = [
       'button#L2AGLb',
@@ -134,8 +168,8 @@ function sanitizeUrl(href: string): string {
   }
 }
 
-async function extractResults(page: Page, limit = 10): Promise<SerpItem[]> {
-	const timeout = 1500000; // orig: 15000
+export async function extractResults(page: Page, limit = 10, timeout: number = 1500000): Promise<SerpItem[]> {
+	// Note: default timeout is intentionally high for CLI dev. Callers can override.
   await page.waitForSelector('div#search', { timeout });
   await page.waitForFunction(() => !!document.querySelector('div#search a h3'), null, { timeout });
 
@@ -195,7 +229,25 @@ async function extractResults(page: Page, limit = 10): Promise<SerpItem[]> {
   return results.slice(0, limit);
 }
 
-export async function searchGoogle(query: string, options: SearchOptions = {}): Promise<SerpResult> {
+export function computeDurations(t: NavigationTimings): DurationSummary {
+  const connect = (t.connectEnd && t.connectStart) ? Math.max(0, t.connectEnd - t.connectStart) : null;
+  const tls = (t.secureConnectionStart && t.connectEnd && t.secureConnectionStart > 0) ? Math.max(0, t.connectEnd - t.secureConnectionStart) : null;
+  const ttfb = (t.responseStart && t.requestStart) ? Math.max(0, t.responseStart - t.requestStart) : null;
+  const contentDownload = (t.responseEnd && t.responseStart) ? Math.max(0, t.responseEnd - t.responseStart) : null;
+  const dcl = (t.domContentLoadedEventEnd && t.startTime !== undefined && t.domContentLoadedEventEnd > 0) ? Math.max(0, t.domContentLoadedEventEnd - t.startTime) : null;
+  const load = (t.loadEventEnd && t.startTime !== undefined && t.loadEventEnd > 0) ? Math.max(0, t.loadEventEnd - t.startTime) : null;
+  let total: number | null = null;
+  if (t.loadEventEnd && t.loadEventEnd > 0 && t.fetchStart !== undefined) {
+    total = Math.max(0, t.loadEventEnd - t.fetchStart);
+  } else if (t.domContentLoadedEventEnd && t.domContentLoadedEventEnd > 0 && t.fetchStart !== undefined) {
+    total = Math.max(0, t.domContentLoadedEventEnd - t.fetchStart);
+  } else if (t.responseEnd && t.fetchStart !== undefined) {
+    total = Math.max(0, t.responseEnd - t.fetchStart);
+  }
+  return { connect, tls, ttfb, contentDownload, dcl, load, total };
+}
+
+export async function searchGoogleDetailed(query: string, options: SearchOptions & { resultWaitTimeoutMs?: number } = {}): Promise<DetailedSerpResult> {
   const {
     num = 10,
     hl = 'en',
@@ -208,6 +260,8 @@ export async function searchGoogle(query: string, options: SearchOptions = {}): 
     proxy,
     keepOpen = false,
     browser: browserName = 'chromium',
+    useSystemProxy = false,
+    resultWaitTimeoutMs,
   } = options;
 
   const url = buildSearchUrl(query, { hl, gl, domain, num, safe, tbs });
@@ -221,16 +275,18 @@ export async function searchGoogle(query: string, options: SearchOptions = {}): 
   };
   const parsedProxy = parseProxy(proxy);
   if (parsedProxy) {
-    // Disallow SOCKS proxies entirely
     if (/^socks/i.test(parsedProxy.server)) {
       throw new Error('Authenticated SOCKS proxies are not supported by Playwright. Use an HTTP proxy.');
     }
-    // Always pass credentials separately; Playwright will send Proxy-Authorization: Basic base64(username:password)
     (launchOpts as any).proxy = {
       server: parsedProxy.server,
       username: parsedProxy.username,
       password: parsedProxy.password,
     };
+  } else {
+    if (!useSystemProxy) {
+      (launchOpts.args as string[]).push('--no-proxy-server');
+    }
   }
 
   let browserType: BrowserType;
@@ -255,18 +311,75 @@ export async function searchGoogle(query: string, options: SearchOptions = {}): 
   };
 
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    const resp = await page.goto(url, { waitUntil: 'domcontentloaded' });
     await acceptGoogleConsent(page);
     if (!/\/search\?/.test(page.url())) {
       await page.goto(url, { waitUntil: 'domcontentloaded' });
     }
-    const results = await extractResults(page, num);
-    const out: any = { query, url: page.url(), results };
-    if (keepOpen) out.close = close;
-    return out as SerpResult;
+
+    // Block detection
+    const status = resp?.status?.() ?? 200;
+    const bodyText = (await page.locator('body').first().textContent({ timeout: 5000 })) || '';
+    const html = await page.content();
+    const lower = (bodyText + ' ' + html).toLowerCase();
+    const blockPhrases = [
+      'unusual traffic', 'sorry', 'are you a robot', 'verify you are human',
+      'our systems have detected', 'to continue, please type the characters', 'recaptcha'
+    ];
+    const hitPhrase = blockPhrases.find(p => lower.includes(p));
+
+    // Extract results
+    const results = await extractResults(page, num, resultWaitTimeoutMs ?? 15000);
+
+    // Navigation timings
+    const t: NavigationTimings = await page.evaluate(() => {
+      const e = performance.getEntriesByType('navigation')[0] as any;
+      if (!e) return {
+        startTime: 0, fetchStart: 0, domainLookupStart: 0, domainLookupEnd: 0,
+        connectStart: 0, secureConnectionStart: 0, connectEnd: 0, requestStart: 0,
+        responseStart: 0, responseEnd: 0, domContentLoadedEventEnd: 0, loadEventEnd: 0,
+      };
+      return {
+        startTime: e.startTime,
+        fetchStart: e.fetchStart,
+        domainLookupStart: e.domainLookupStart,
+        domainLookupEnd: e.domainLookupEnd,
+        connectStart: e.connectStart,
+        secureConnectionStart: e.secureConnectionStart,
+        connectEnd: e.connectEnd,
+        requestStart: e.requestStart,
+        responseStart: e.responseStart,
+        responseEnd: e.responseEnd,
+        domContentLoadedEventEnd: e.domContentLoadedEventEnd,
+        loadEventEnd: e.loadEventEnd,
+      } as any;
+    });
+    const durs = computeDurations(t);
+
+    const ok = !(status >= 400 || !!hitPhrase) && results.length > 0;
+    const out: DetailedSerpResult = {
+      query,
+      url: page.url(),
+      results,
+      ok,
+      blocked: (status >= 400) || !!hitPhrase,
+      blockType: (status >= 400) ? `http-${status}` : (!!hitPhrase ? 'captcha/block-page' : (!ok ? 'no-results' : undefined)),
+      timings: { ...durs, raw: t },
+    };
+    if (keepOpen) (out as any).close = close;
+    return out;
   } finally {
     if (!keepOpen) {
       await close();
     }
   }
+}
+
+export async function searchGoogle(query: string, options: SearchOptions = {}): Promise<SerpResult> {
+  const detailed = await searchGoogleDetailed(query, options);
+  const out: any = { query: detailed.query, url: detailed.url, results: detailed.results };
+  if (options.keepOpen && typeof (detailed as any).close === 'function') {
+    out.close = (detailed as any).close;
+  }
+  return out as SerpResult;
 }

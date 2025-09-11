@@ -146,7 +146,17 @@ async function runOne(vendor: Vendor, query: string, opts: Omit<SearchOptions,'p
     };
     return out;
   } catch (err: any) {
-    return { ...outBase, error: err?.message || String(err) };
+    const msg = err?.message || String(err);
+    let blocked = false;
+    let blockType: string | undefined = undefined;
+    if (/ERR_PROXY_CONNECTION_FAILED/i.test(msg)) {
+      blocked = true;
+      blockType = 'proxy-conn-failed';
+    } else if (/^page\.goto: net::ERR_/i.test(msg)) {
+      blocked = true;
+      blockType = 'network-error';
+    }
+    return { ...outBase, ok: false, blocked, blockType, error: msg };
   }
 }
 
@@ -308,7 +318,8 @@ function escapeHtml(s: string) {
 
 async function main() {
   const args = parseArgs(process.argv);
-  const vendors = loadVendors(args.proxies);
+  const vendorsIn = loadVendors(args.proxies);
+  const vendors = vendorsIn.slice().sort((a, b) => (a.name === 'direct' ? -1 : (b.name === 'direct' ? 1 : 0)));
   const queries = loadQueries(args.queries);
   ensureDir(args.outDir);
 
@@ -318,35 +329,31 @@ async function main() {
   console.log(`Concurrency: ${args.concurrency.join(', ')} (plateau ${args.plateauSec}s)`);
 
   for (const conc of args.concurrency) {
-    console.log(`\n== Plateau concurrency ${conc} for ${args.plateauSec}s ==`);
-    const deadline = Date.now() + args.plateauSec * 1000;
-    const vendorPools: Promise<void>[] = [];
     for (const vendor of vendors) {
-      vendorPools.push((async () => {
-        const workers: Promise<void>[] = [];
-        for (let i = 0; i < conc; i++) {
-          workers.push((async () => {
-            while (Date.now() < deadline) {
-              const q = randPick(queries);
-              try {
-                const r = await runOne(vendor, q, {
-                  hl: args.hl, gl: args.gl, num: args.num, domain: args.domain, tbs: args.tbs, safe: 'off',
-                  browser: args.browser!, headless: args.headless,
-                });
-                allResults.push(r);
-                if (!r.ok) {
-                  console.log(`[${vendor.name}] blocked/error for "${q}": ${r.blockType || r.error}`);
-                }
-              } catch (err: any) {
-                allResults.push({ vendor: vendor.name, query: q, ok: false, blocked: false, error: err?.message || String(err), ts: Date.now() });
+      console.log(`\n== Vendor ${vendor.name} at concurrency ${conc} for ${args.plateauSec}s ==`);
+      const deadline = Date.now() + args.plateauSec * 1000;
+      const workers: Promise<void>[] = [];
+      for (let i = 0; i < conc; i++) {
+        workers.push((async () => {
+          while (Date.now() < deadline) {
+            const q = randPick(queries);
+            try {
+              const r = await runOne(vendor, q, {
+                hl: args.hl, gl: args.gl, num: args.num, domain: args.domain, tbs: args.tbs, safe: 'off',
+                browser: args.browser!, headless: args.headless,
+              });
+              allResults.push(r);
+              if (!r.ok) {
+                console.log(`[${vendor.name}] blocked/error for "${q}": ${r.blockType || r.error}`);
               }
+            } catch (err: any) {
+              allResults.push({ vendor: vendor.name, query: q, ok: false, blocked: false, error: err?.message || String(err), ts: Date.now() });
             }
-          })());
-        }
-        await Promise.allSettled(workers);
-      })());
+          }
+        })());
+      }
+      await Promise.allSettled(workers);
     }
-    await Promise.allSettled(vendorPools);
   }
 
   const summary = summarize(allResults);

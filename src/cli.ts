@@ -32,7 +32,7 @@ Options:
       --gl <cc>        Country code (e.g., US, GB)
       --domain <host>  Google domain (default google.com)
       --tbs <val>      Time filter (e.g., qdr:d | qdr:w | qdr:m)
-      --proxy <url>    Proxy (http:// or socks5://). Username may include modifiers like +country=us
+      --proxy <url>    HTTP proxy only (http://). Username may include modifiers like +country=us
       --safe <mode>    Safe search: off | active (default off)
       --headful        Run browser in headful mode
       --keep-open      Keep the browser open (press Enter to close)

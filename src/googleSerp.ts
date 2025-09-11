@@ -221,9 +221,9 @@ export async function searchGoogle(query: string, options: SearchOptions = {}): 
   };
   const parsedProxy = parseProxy(proxy);
   if (parsedProxy) {
-    // SOCKS with auth is not supported by Playwright
-    if (/^socks/i.test(parsedProxy.server) && (parsedProxy.username || parsedProxy.password)) {
-      throw new Error('SOCKS proxy authentication is not supported by Playwright. Use an HTTP proxy or a local HTTP→SOCKS bridge.');
+    // Disallow SOCKS proxies entirely
+    if (/^socks/i.test(parsedProxy.server)) {
+      throw new Error('Authenticated SOCKS proxies are not supported by Playwright. Use an HTTP proxy.');
     }
     // Always pass credentials separately; Playwright will send Proxy-Authorization: Basic base64(username:password)
     (launchOpts as any).proxy = {
@@ -237,12 +237,6 @@ export async function searchGoogle(query: string, options: SearchOptions = {}): 
   if (browserName === 'firefox') browserType = firefox;
   else if (browserName === 'webkit') browserType = webkit;
   else browserType = chromium;
-
-  // Playwright does not support SOCKS proxy authentication in any engine
-  if (parsedProxy && /^socks/i.test(parsedProxy.server) && (parsedProxy.username || parsedProxy.password)) {
-    throw new Error('SOCKS proxy authentication is not supported by Playwright. Use an HTTP proxy or a local HTTP->SOCKS bridge, or a SOCKS proxy without auth.');
-  }
-
   const browser = await browserType.launch(launchOpts);
 
   const deviceName = browserType === chromium ? 'Desktop Chrome' : browserType === firefox ? 'Desktop Firefox' : 'Desktop Safari';

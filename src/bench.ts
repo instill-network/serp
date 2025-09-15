@@ -9,6 +9,9 @@ type BenchArgs = {
   queries?: string;
   concurrency: number[];
   plateauSec: number;
+  resultTimeoutSec: number;
+  navTimeoutMs: number;
+  openDelayMs: number;
   hl?: string;
   gl?: string;
   domain?: string;
@@ -31,6 +34,7 @@ type OneRun = {
   blockType?: string;
   error?: string;
   ts: number;
+  conc?: number;
   timings?: {
     connect: number | null;
     tls: number | null;
@@ -52,6 +56,9 @@ function parseArgs(argv: string[]): BenchArgs {
     else if (a === '--queries') args.queries = argv[++i];
     else if (a === '--concurrency' || a === '-c') args.concurrency = argv[++i];
     else if (a === '--plateau-sec') args.plateauSec = Number(argv[++i]);
+    else if (a === '--result-timeout-sec') args.resultTimeoutSec = Number(argv[++i]);
+    else if (a === '--nav-timeout-ms') args.navTimeoutMs = Number(argv[++i]);
+    else if (a === '--open-delay-ms') args.openDelayMs = Number(argv[++i]);
     else if (a === '--hl') args.hl = argv[++i];
     else if (a === '--gl') args.gl = argv[++i];
     else if (a === '--domain') args.domain = argv[++i];
@@ -72,6 +79,9 @@ function parseArgs(argv: string[]): BenchArgs {
     queries: args.queries,
     concurrency: typeof args.concurrency === 'string' ? args.concurrency.split(',').map((x: string) => Number(x.trim())).filter(Boolean) : [1, 5, 10],
     plateauSec: Number.isFinite(args.plateauSec) ? args.plateauSec : 60,
+    resultTimeoutSec: Number.isFinite(args.resultTimeoutSec) ? args.resultTimeoutSec : 5,
+    navTimeoutMs: Number.isFinite(args.navTimeoutMs) ? Math.max(500, args.navTimeoutMs) : 3000,
+    openDelayMs: Number.isFinite(args.openDelayMs) ? Math.max(0, args.openDelayMs) : 1000,
     hl: args.hl ?? 'en',
     gl: args.gl,
     domain: args.domain ?? 'google.com',
@@ -86,7 +96,7 @@ function parseArgs(argv: string[]): BenchArgs {
 }
 
 function printHelp() {
-  console.log(`Usage: serp-bench [options]\n\nOptions:\n  --proxies <file>     JSON file with vendors [{ name, proxy }]\n  --queries <file>     Text file with one query per line\n  -c, --concurrency    Comma list (default 1,5,10)\n  --plateau-sec <N>    Seconds per concurrency plateau (default 60)\n  --hl <lang>          UI language (default en)\n  --gl <cc>            Country code (e.g., US)\n  --domain <host>      Google domain (default google.com)\n  -n, --num <N>        Results per query (default 10)\n  --tbs <val>          Time filter (e.g., qdr:w)\n  --browser <name>     chromium | firefox | webkit (default chromium)\n  --headful            Run non-headless\n  -o, --out <dir>      Output directory (default bench_out/<timestamp>)\n  --baseline <name>    Vendor name to use as correctness baseline\n  -h, --help           Show help\n`);
+  console.log(`Usage: serp-bench [options]\n\nOptions:\n  --proxies <file>     JSON file with vendors [{ name, proxy }]\n  --queries <file>     Text file with one query per line\n  -c, --concurrency    Comma list (default 1,5,10)\n  --plateau-sec <N>    Seconds per concurrency plateau (default 60)\n  --result-timeout-sec <N>  Per-request result wait timeout (default 5)\n  --nav-timeout-ms <N> Navigation/actions timeout in ms (default 3000)\n  --open-delay-ms <N>  Delay between opening windows in ms (default 1000)\n  --hl <lang>          UI language (default en)\n  --gl <cc>            Country code (e.g., US)\n  --domain <host>      Google domain (default google.com)\n  -n, --num <N>        Results per query (default 10)\n  --tbs <val>          Time filter (e.g., qdr:w)\n  --browser <name>     chromium | firefox | webkit (default chromium)\n  --headful            Run non-headless\n  -o, --out <dir>      Output directory (default bench_out/<timestamp>)\n  --baseline <name>    Vendor name to use as correctness baseline\n  -h, --help           Show help\n`);
 }
 
 function ensureDir(p: string) {
@@ -127,13 +137,14 @@ function randPick<T>(arr: T[]): T { return arr[Math.floor(Math.random()*arr.leng
 
 // Durations are provided by searchGoogleDetailed
 
-async function runOne(vendor: Vendor, query: string, opts: Omit<SearchOptions,'proxy'> & { browser: 'chromium'|'firefox'|'webkit' }): Promise<OneRun> {
+async function runOne(vendor: Vendor, query: string, opts: Omit<SearchOptions,'proxy'> & { browser: 'chromium'|'firefox'|'webkit'; resultTimeoutMs: number; navTimeoutMs: number }): Promise<OneRun> {
   const outBase: OneRun = { vendor: vendor.name, query, ok: false, blocked: false, ts: Date.now() };
   try {
     const r = await searchGoogleDetailed(query, {
       hl: opts.hl, gl: opts.gl, num: opts.num, domain: opts.domain, tbs: opts.tbs, safe: 'off',
       browser: opts.browser, headless: opts.headless, proxy: vendor.proxy || undefined, useSystemProxy: false,
-      resultWaitTimeoutMs: 8000,
+      timeoutMs: opts.navTimeoutMs,
+      resultWaitTimeoutMs: opts.resultTimeoutMs,
     });
     const out: OneRun = {
       ...outBase,
@@ -155,6 +166,10 @@ async function runOne(vendor: Vendor, query: string, opts: Omit<SearchOptions,'p
     } else if (/^page\.goto: net::ERR_/i.test(msg)) {
       blocked = true;
       blockType = 'network-error';
+    } else if (/timeout .* exceeded/i.test(msg)) {
+      // Classify generic operation timeouts explicitly for aggregator visibility
+      blocked = false;
+      blockType = 'timeout';
     }
     return { ...outBase, ok: false, blocked, blockType, error: msg };
   }
@@ -176,13 +191,16 @@ function summarize(results: OneRun[]) {
   for (const [vendor, arr] of Object.entries(byVendor)) {
     const ok = arr.filter(r => r.ok).length;
     const blocked = arr.filter(r => r.blocked).length;
+    const timeouts = arr.filter(r => r.blockType === 'timeout').length;
     const total = arr.length;
     const ttfb = arr.map(r => r.timings?.ttfb || NaN).filter(n => Number.isFinite(n)) as number[];
     const totalLoad = arr.map(r => r.timings?.total || NaN).filter(n => Number.isFinite(n)) as number[];
     summary[vendor] = {
       total,
       ok,
+      failed: Math.max(0, total - ok),
       blocked,
+      timeouts,
       successRate: total ? ok/total : 0,
       blockRate: total ? blocked/total : 0,
       p50: { ttfb: percentile(ttfb, 50), total: percentile(totalLoad, 50) },
@@ -278,9 +296,9 @@ function renderReportHTML(data: { args: BenchArgs; results: OneRun[]; summary: a
 
   <h3>Summary</h3>
   <table>
-    <thead><tr><th>Vendor</th><th>Total</th><th>OK</th><th>Blocked</th><th>Success %</th><th>p95 TTFB</th><th>p95 Total</th></tr></thead>
+    <thead><tr><th>Vendor</th><th>Total</th><th>OK</th><th>Failed</th><th>Blocked</th><th>Timeouts</th><th>Success %</th><th>p95 TTFB</th><th>p95 Total</th></tr></thead>
     <tbody>
-      ${vendors.map(v => `<tr><td>${escapeHtml(v)}</td><td>${data.summary[v].total}</td><td>${data.summary[v].ok}</td><td>${data.summary[v].blocked}</td><td>${(data.summary[v].successRate*100).toFixed(1)}</td><td>${Math.round(data.summary[v].p95.ttfb || 0)}</td><td>${Math.round(data.summary[v].p95.total || 0)}</td></tr>`).join('')}
+      ${vendors.map(v => `<tr><td>${escapeHtml(v)}</td><td>${data.summary[v].total}</td><td>${data.summary[v].ok}</td><td>${data.summary[v].failed ?? (data.summary[v].total - data.summary[v].ok)}</td><td>${data.summary[v].blocked}</td><td>${data.summary[v].timeouts ?? 0}</td><td>${(data.summary[v].successRate*100).toFixed(1)}</td><td>${Math.round(data.summary[v].p95.ttfb || 0)}</td><td>${Math.round(data.summary[v].p95.total || 0)}</td></tr>`).join('')}
     </tbody>
   </table>
 
@@ -325,6 +343,7 @@ function renderReportHTML(data: { args: BenchArgs; results: OneRun[]; summary: a
   bar('p95', vendors, p95Total, '#10b981');
   bar('corr', corrVendors, corrScores, '#f59e0b');
   </script>
+  <div class="small" style="margin-top: 24px;">serp-bench made at <a href="https://instill.network" target="_blank" rel="noopener noreferrer">instill.network</a></div>
 </body>
 </html>`;
 }
@@ -335,6 +354,12 @@ function escapeHtml(s: string) {
 
 async function main() {
   const args = parseArgs(process.argv);
+  const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
+  // Global throttle to space out new browser launches across all workers
+  const openDelay = Math.max(0, args.openDelayMs || 0);
+  let lastLaunchAt = 0;
+  let launchLock: Promise<void> = Promise.resolve();
+  // Note: We set up a per-plateau "burst" below so initial concurrency starts immediately.
   const vendorsIn = loadVendors(args.proxies);
   const vendors = vendorsIn.slice().sort((a, b) => (a.name === 'direct' ? -1 : (b.name === 'direct' ? 1 : 0)));
   const queries = loadQueries(args.queries);
@@ -344,27 +369,53 @@ async function main() {
   console.log(`Vendors: ${vendors.map(v => v.name).join(', ')}`);
   console.log(`Queries: ${queries.length}`);
   console.log(`Concurrency: ${args.concurrency.join(', ')} (plateau ${args.plateauSec}s)`);
+  console.log(`Per-request result timeout: ${args.resultTimeoutSec}s`);
+  if (openDelay > 0) console.log(`Open delay between windows: ${openDelay}ms`);
 
   for (const conc of args.concurrency) {
     for (const vendor of vendors) {
       console.log(`\n== Vendor ${vendor.name} at concurrency ${conc} for ${args.plateauSec}s ==`);
       const deadline = Date.now() + args.plateauSec * 1000;
+      // Allow an initial burst equal to the target concurrency so windows appear immediately,
+      // then apply openDelay throttling only for subsequent launches.
+      let burstRemaining = Math.max(0, conc);
+      const throttleWindowOpen = async () => {
+        if (openDelay <= 0) return;
+        const prev = launchLock;
+        let release!: () => void;
+        launchLock = new Promise<void>(res => { release = res; });
+        await prev;
+        if (burstRemaining > 0) {
+          burstRemaining--;
+          // No delay for initial burst to respect desired concurrency.
+          release();
+          return;
+        }
+        const now = Date.now();
+        const wait = Math.max(0, (lastLaunchAt + openDelay) - now);
+        if (wait > 0) await sleep(wait);
+        lastLaunchAt = Date.now();
+        release();
+      };
       const workers: Promise<void>[] = [];
       for (let i = 0; i < conc; i++) {
         workers.push((async () => {
           while (Date.now() < deadline) {
             const q = randPick(queries);
             try {
+              await throttleWindowOpen();
               const r = await runOne(vendor, q, {
                 hl: args.hl, gl: args.gl, num: args.num, domain: args.domain, tbs: args.tbs, safe: 'off',
                 browser: args.browser!, headless: args.headless,
+                resultTimeoutMs: Math.max(500, Math.floor(args.resultTimeoutSec * 1000)),
+                navTimeoutMs: Math.max(1000, Math.floor(args.navTimeoutMs)),
               });
-              allResults.push(r);
+              allResults.push({ ...r, conc });
               if (!r.ok) {
                 console.log(`[${vendor.name}] blocked/error for "${q}": ${r.blockType || r.error}`);
               }
             } catch (err: any) {
-              allResults.push({ vendor: vendor.name, query: q, ok: false, blocked: false, error: err?.message || String(err), ts: Date.now() });
+              allResults.push({ vendor: vendor.name, query: q, ok: false, blocked: false, error: err?.message || String(err), ts: Date.now(), conc });
             }
           }
         })());

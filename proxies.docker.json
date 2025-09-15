@@ -1,0 +1,6 @@
+[
+  {
+    "name": "instill",
+    "proxy": "http://nino+session_id=__UUID__:toor@host.docker.internal:8080"
+  }
+]

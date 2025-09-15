@@ -16,7 +16,7 @@
     "bench": "node dist/bench.js"
   },
   "dependencies": {
-    "playwright": "^1.47.2"
+    "playwright": "^1.55.0"
   },
   "engines": {
     "node": ">=18"

@@ -1,4 +1,5 @@
-import { chromium, firefox, webkit, devices, type BrowserContext, type Page, type BrowserType } from 'playwright';
+import { chromium, firefox, webkit, type BrowserContext, type Page, type BrowserType } from 'playwright';
+import { randomUUID, randomBytes } from 'node:crypto';
 
 export type ProxyInput = string | { server: string; username?: string; password?: string };
 
@@ -9,6 +10,8 @@ export interface SearchOptions {
   domain?: string;
   headless?: boolean;
   timeoutMs?: number;
+  // Max time to wait for organic results on the SERP to appear
+  resultWaitTimeoutMs?: number;
   safe?: 'off' | 'active';
   tbs?: string;
   proxy?: ProxyInput;
@@ -64,8 +67,40 @@ export interface DetailedSerpResult extends SerpResult {
 
 export function parseProxy(input?: ProxyInput): ( { server: string; username?: string; password?: string } & { authRaw?: string; scheme?: string } ) | undefined {
   if (!input) return undefined;
-  if (typeof input !== 'string') return input as any;
+  // Replace placeholders like __UUID__ per invocation
+  const genUUID = (): string => {
+    try {
+      if (typeof randomUUID === 'function') return randomUUID();
+    } catch {}
+    const b = randomBytes(16);
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // variant 10
+    const hex = b.toString('hex');
+    return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  };
+  const replaceUuid = <T extends string | undefined>(s: T, uuid: string): T => (typeof s === 'string' ? (s as string).split('__UUID__').join(uuid) as any : s);
+
+  if (typeof input !== 'string') {
+    const needsUuid = (
+      (input.username && input.username.includes('__UUID__')) ||
+      (input.password && input.password.includes('__UUID__')) ||
+      (input.server && input.server.includes('__UUID__'))
+    );
+    if (needsUuid) {
+      const u = genUUID();
+      return {
+        server: replaceUuid(input.server, u)!,
+        username: replaceUuid(input.username, u),
+        password: replaceUuid(input.password, u),
+      } as any;
+    }
+    return input as any;
+  }
   let raw = input.trim();
+  if (raw.includes('__UUID__')) {
+    const u = genUUID();
+    raw = raw.split('__UUID__').join(u);
+  }
   if (!/^\w+:\/\//i.test(raw)) raw = `http://${raw}`;
 
   // Manual parse to preserve special characters in credentials
@@ -293,23 +328,36 @@ export async function searchGoogleDetailed(query: string, options: SearchOptions
   if (browserName === 'firefox') browserType = firefox;
   else if (browserName === 'webkit') browserType = webkit;
   else browserType = chromium;
+
   const browser = await browserType.launch(launchOpts);
 
-  const deviceName = browserType === chromium ? 'Desktop Chrome' : browserType === firefox ? 'Desktop Firefox' : 'Desktop Safari';
-  const baseDevice = devices[deviceName];
+  // Use default platform UA to avoid UA/platform mismatch; only set locale and optional timezone.
   const context: BrowserContext = await browser.newContext({
-    ...baseDevice,
     locale: hl,
-    userAgent: baseDevice.userAgent?.replace('Headless', '') || undefined,
+    timezoneId: process.env.TZ || undefined,
   });
   const page = await context.newPage();
   page.setDefaultTimeout(timeoutMs);
 
-  const close = async () => {
+  // Compute randomized delay for closing when applicable
+  const computeCloseDelayMs = () => {
+    const min = 5000; // 5s
+    const max = 10000; // 10s
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  };
+
+  const closeImmediate = async () => {
     try { await context.close(); } catch {}
     try { await browser.close(); } catch {}
   };
 
+  // Close immediately when keepOpen is used (no extra delay after Enter)
+  const close = async () => {
+    await closeImmediate();
+  };
+
+  let runSucceeded = false;
+  let finalOk = false;
   try {
     const resp = await page.goto(url, { waitUntil: 'domcontentloaded' });
     await acceptGoogleConsent(page);
@@ -319,7 +367,10 @@ export async function searchGoogleDetailed(query: string, options: SearchOptions
 
     // Block detection
     const status = resp?.status?.() ?? 200;
-    const bodyText = (await page.locator('body').first().textContent({ timeout: 5000 })) || '';
+    let bodyText = '';
+    try {
+      bodyText = (await page.locator('body').first().textContent({ timeout: 5000 })) || '';
+    } catch {}
     const html = await page.content();
     const lower = (bodyText + ' ' + html).toLowerCase();
     const blockPhrases = [
@@ -329,7 +380,12 @@ export async function searchGoogleDetailed(query: string, options: SearchOptions
     const hitPhrase = blockPhrases.find(p => lower.includes(p));
 
     // Extract results
-    const results = await extractResults(page, num, resultWaitTimeoutMs ?? 15000);
+    let results: SerpItem[] = [];
+    try {
+      results = await extractResults(page, num, resultWaitTimeoutMs ?? 15000);
+    } catch {
+      results = [];
+    }
 
     // Navigation timings
     const t: NavigationTimings = await page.evaluate(() => {
@@ -367,10 +423,26 @@ export async function searchGoogleDetailed(query: string, options: SearchOptions
       timings: { ...durs, raw: t },
     };
     if (keepOpen) (out as any).close = close;
+    runSucceeded = true;
+    finalOk = ok;
     return out;
   } finally {
     if (!keepOpen) {
-      await close();
+      // Headful ergonomics: brief linger to allow visual inspection.
+      // - On success: keep 5–10s (as before).
+      // - On failure (timeout/block/no results): keep ~1–2s in headful; immediate in headless.
+      // If no explicit result timeout provided, behave like before (success linger only).
+      const hasResultTimeout = Number.isFinite(resultWaitTimeoutMs as any);
+      let delayMs = 0;
+      if (runSucceeded && finalOk) {
+        delayMs = computeCloseDelayMs();
+      } else if (hasResultTimeout) {
+        // Failure path with explicit result timeout
+        delayMs = headless ? 0 : 1500;
+      } else {
+        delayMs = 0;
+      }
+      setTimeout(() => { closeImmediate().catch(() => {}); }, Math.max(0, delayMs));
     }
   }
 }

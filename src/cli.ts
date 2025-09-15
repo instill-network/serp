@@ -13,6 +13,8 @@ function parseArgs(argv: string[]) {
     else if (a === '--safe') args.safe = argv[++i];
     else if (a === '--headful') args.headless = false;
     else if (a === '--proxy') args.proxy = argv[++i];
+    else if (a === '--result-timeout-sec') args.resultTimeoutSec = Number(argv[++i]);
+    else if (a === '--nav-timeout-ms') args.navTimeoutMs = Number(argv[++i]);
     else if (a === '--use-system-proxy') args.useSystemProxy = true;
     else if (a === '--keep-open') args.keepOpen = true;
     else if (a === '--browser') args.browser = argv[++i];
@@ -33,7 +35,9 @@ Options:
       --gl <cc>        Country code (e.g., US, GB)
       --domain <host>  Google domain (default google.com)
       --tbs <val>      Time filter (e.g., qdr:d | qdr:w | qdr:m)
-      --proxy <url>    HTTP proxy only (http://). Username may include modifiers like +country=us
+      --proxy <url>    HTTP proxy only (http://). Username may include modifiers like +country=us. Use __UUID__ to auto-generate a UUID per run.
+      --result-timeout-sec <N>  Per-request result wait timeout in seconds (default 5s)
+      --nav-timeout-ms <N>  Navigation/actions timeout in ms (default 3000)
       --safe <mode>    Safe search: off | active (default off)
       --headful        Run browser in headful mode
       --keep-open      Keep the browser open (press Enter to close)
@@ -53,6 +57,9 @@ async function main() {
   }
   const query = args._.join(' ');
 
+  const resultTimeoutMs = Number.isFinite(args.resultTimeoutSec) ? Math.max(500, Math.floor(args.resultTimeoutSec * 1000)) : 5000;
+  const navTimeoutMs = Number.isFinite(args.navTimeoutMs) ? Math.max(500, Math.floor(args.navTimeoutMs)) : 3000;
+
   const opts: SearchOptions = {
     num: Number.isFinite(args.num) ? args.num : 10,
     hl: args.hl ?? 'en',
@@ -65,6 +72,8 @@ async function main() {
     keepOpen: !!args.keepOpen,
     browser: (['chromium','firefox','webkit'] as const).includes(args.browser) ? args.browser : undefined,
     useSystemProxy: !!args.useSystemProxy,
+    timeoutMs: navTimeoutMs,
+    resultWaitTimeoutMs: resultTimeoutMs,
   };
 
   try {

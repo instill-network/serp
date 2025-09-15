@@ -1,8 +1,11 @@
 node_modules/
-package-lock.json
 playwright-report/
 test-results/
 .env
 .DS_Store
 dist/
 .idea
+bench_out/
+# Local proxy configs (use examples/ instead)
+proxies.local.json
+proxies.docker.json

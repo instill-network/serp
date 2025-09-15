@@ -1,0 +1,6 @@
+[
+  {
+    "name": "instill",
+    "proxy": "http://username+session_id=__UUID__:password@instill.network:8080"
+  }
+]

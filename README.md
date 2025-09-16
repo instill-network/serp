@@ -16,6 +16,7 @@ Examples (local)
 Tip: you can also run the local package directly with `npx --yes . --help` after building.
 
 Docker
+- Image: https://hub.docker.com/r/skopac/serp
 - Build: `docker build -t serp .`
 - Run serp: `docker run --rm -it serp --json "your query"`
 - Run serp with proxy: `docker run --rm -it serp --proxy http://user+country=us:pass@proxy:port "your query"`

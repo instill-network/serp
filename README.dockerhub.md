@@ -2,7 +2,9 @@
 
 Minimal Google SERP scraper and benchmarking CLI built on Playwright. Ships headless by default with optional headful viewing over VNC. Includes Chromium/Firefox/WebKit browsers.
 
-Made to benchmark https://instill.network/ 's residential proxies.
+## Why
+- Made to benchmark https://instill.network/ 's residential proxies.
+- Github: https://github.com/instill-network/serp
 
 ## Tags
 - `latest` — Playwright v1.55 on Ubuntu 22.04 (Jammy). See `Dockerfile`.
@@ -16,8 +18,8 @@ Replace `<image>` with your published image (e.g., `yourorg/serp`).
 
 ## Headful via VNC
 - Enable headful UI + VNC:
-  - `docker run --rm -it -p 5900:5900 -e HEADFUL=1 <image> --headful --keep-open "best coffee makers"`
-  - Optional password: `-e VNC_PASSWORD=secret`
+    - `docker run --rm -it -p 5900:5900 -e HEADFUL=1 <image> --headful --keep-open "best coffee makers"`
+    - Optional password: `-e VNC_PASSWORD=secret`
 - Connect a VNC client to `localhost:5900` (use password if set).
 - Tunables (env): `HEADFUL=0|1`, `DISPLAY=:99`, `SCREEN_WIDTH=1920`, `SCREEN_HEIGHT=1080`, `SCREEN_DEPTH=24`, `VNC_PORT=5900`, `VNC_PASSWORD=<string>`, `TZ` (default `America/New_York`).
 - Fonts preinstalled: Noto (incl. emoji), Liberation, DejaVu.
@@ -51,14 +53,14 @@ Replace `<image>` with your published image (e.g., `yourorg/serp`).
 - Load shape: `-c, --concurrency <list>` (e.g., `1,5,10`), `--plateau-sec <N>` per stage
 - Timeouts: `--result-timeout-sec <N>`, `--nav-timeout-ms <N>`
 - Browser/headless: `--browser <name>`, `--headful`
-- Output dir: `-o, --out <dir>` (default `bench_out/<timestamp>`)  
+- Output dir: `-o, --out <dir>` (default `bench_out/<timestamp>`)
 - Correctness baseline: `--baseline <vendorName>`
 
 ## Proxies
 - HTTP proxies only (Playwright limitation for authenticated SOCKS).
 - UUID placeholder: use `__UUID__` in username/password to auto-generate a fresh UUID.
-  - Example: `--proxy http://user+session_id=__UUID__:pass@host:port`
-  - `serp`: one UUID per invocation; `serp-bench`: new UUID per request.
+    - Example: `--proxy http://user+session_id=__UUID__:pass@host:port`
+    - `serp`: one UUID per invocation; `serp-bench`: new UUID per request.
 - For Docker-to-host proxies on Docker Desktop use `host.docker.internal`:
   ```json
   [{ "name": "instill", "proxy": "http://user+session_id=__UUID__:pass@host.docker.internal:8080" }]

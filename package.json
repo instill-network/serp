@@ -4,6 +4,15 @@
   "private": true,
   "description": "Google SERP scraper using Playwright",
   "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/instill-network/serp.git"
+  },
+  "homepage": "https://github.com/instill-network/serp",
+  "bugs": {
+    "url": "https://github.com/instill-network/serp/issues"
+  },
+  "author": "Instill Network",
   "bin": {
     "serp": "bin/serp",
     "serp-bench": "bin/serp-bench"

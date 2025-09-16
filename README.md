@@ -1,4 +1,4 @@
-**Google SERP via Playwright**
+# Google SERP via Playwright
 
 A minimal, pragmatic Google SERP scraper and benchmarking tool powered by Playwright. Ships as a CLI and a Docker image, with optional headful viewing via VNC.
 

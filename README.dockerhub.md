@@ -2,6 +2,8 @@
 
 Minimal Google SERP scraper and benchmarking CLI built on Playwright. Ships headless by default with optional headful viewing over VNC. Includes Chromium/Firefox/WebKit browsers.
 
+Made to benchmark https://instill.network/ 's residential proxies.
+
 ## Tags
 - `latest` — Playwright v1.55 on Ubuntu 22.04 (Jammy). See `Dockerfile`.
 
